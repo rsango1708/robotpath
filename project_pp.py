@@ -1,27 +1,31 @@
 import heapq
 #import networkx as nx
+import rospy
 import matplotlib.pyplot as plt
 import math
 import string
 import itertools
 import time
 from time import sleep
-#import ld06
-from unittest import mock
-#import RPi.GPIO as gpio
-from unittest import mock
-
+import ld06
+#from unittest import mock
+import RPi.GPIO as gpio
+#from unittest import mock
+from std_msgs.msg import String
+end=False
 # Create a fake GPIO module
-class MockGPIO:
+'''class MockGPIO:
     BCM = "BCM"
     OUT = "OUT"
     LOW = "LOW"
     
     def setmode(self, mode):
-        print(f"Mock GPIO mode set to {mode}")
+         print(f"Mock GPIO mode set to {mode}")
+        
     
     def setup(self, pin, mode):
         print(f"Mock GPIO setup: Pin {pin}, Mode {mode}")
+        
     
     def output(self, pin, value):
         print(f"Mock GPIO output: Pin {pin}, Value {value}")
@@ -33,9 +37,9 @@ class MockGPIO:
 # Replace RPi.GPIO with the mock class
 gpio = MockGPIO()
 
-gpio.setmode(gpio.BCM)
+gpio.setmode(gpio.BCM)'''
 import json
-class MockLD06:
+'''class MockLD06:
     def __init__(self, port):
         print(f"Mock LiDAR initialized on {port}")
 
@@ -50,12 +54,12 @@ class MockLD06:
 
     def iter_scans(self):
         # Fake some LiDAR scans
-        return iter([[(0, 300), (90, 500), (180, 250), (270, 400)]])
+        return iter([[(90, 13), (0, 23), (180, 250), (270, 400)]])'''
 
 # Replace ld06 import with the mock class
-ld06 = MockLD06
+#ld06 = MockLD06
 lidar = ld06('/dev/ttyS0')
-OBSTACLE_THRESHOLD = 255  
+OBSTACLE_THRESHOLD = 25.5  
 
 def process_lidar_data():
     
@@ -79,14 +83,10 @@ def process_lidar_data():
                 print("Obstacle detected in scan!")
 
             
-            #visualize_obstacles(dynamic_obstacle_nodes)
+            visualize_obstacles(dynamic_obstacle_nodes)
             time.sleep(0.1)  
             
-    except KeyboardInterrupt:
-        print("Stopping scan.")
     finally:
-        lidar.stop_motor()
-        lidar.disconnect()
         return 
 def visualize_obstacles(dynamic_obstacle_nodes):
    
@@ -107,6 +107,28 @@ process_lidar_data()
 
 
 print("a")
+def dynamic_obstacle_recognition(obstacles, path, node_positions):
+    dynamic_updates = set()
+    for i in range(len(path) - 1):
+        current_node = path[i]
+        next_node = path[i + 1]
+    # Check each node in the path for obstacles
+        for scan in lidar.iter_scans():
+         for (angle,distance) in scan:
+            if distance<OBSTACLE_THRESHOLD:
+                obstacle_node = get_node_from_angle_distance(angle, distance, node_positions, path[0])
+
+                if obstacle_node and obstacle_node in node_positions:
+                    print(f"Obstacle detected at node {obstacle_node}")
+                    dynamic_updates.add(obstacle_node)
+                
+
+    obstacles.update(dynamic_updates)
+    
+    updated_path = [node for node in path if node not in obstacles]
+    
+    return updated_path, obstacles
+
 
 
 
@@ -176,7 +198,7 @@ def reconstruct_path(path, start, goal):
     plt.figure(figsize=(10, 8))
     node_colors = []
     for node in G.nodes:
-        if obstacle_nodes and node in obstacle_nodes:
+        if obstacles and node in obstacles:
             node_colors.append("black")  
         elif path and node in path:
             node_colors.append("lightgreen")  
@@ -296,7 +318,7 @@ for x,y in pos.items():
         
         obstacle_nodes.add(x)
 
-
+obstacles=set(obstacle_nodes)
 def get_node_from_angle_distance(angle, distance, pos,current_node):
     
     
@@ -311,41 +333,14 @@ def get_node_from_angle_distance(angle, distance, pos,current_node):
     min_distance = float('inf')
 
     
+    for node, (nx, ny) in pos.items():
+        d = math.sqrt((nx - (x1 + x))**2 + (ny - (y1 + y))**2)
+        if d < min_distance:
+            min_distance = d
+            closest_node = node
 
-def dynamic_obstacle_recognition(obstacles, path, node_positions):
-    dynamic_updates = {}
-    for i in range(len(path) - 1):
-        current_node = path[i]
-        next_node = path[i + 1]
-    # Check each node in the path for obstacles
-    for scan in lidar.iter_scans():
-        for (angle,distance) in scan:
-            if distance<OBSTACLE_THRESHOLD:
-                x1, y1 = node_positions[current_node]
-                x2, y2 = node_positions[next_node]
-                if angle>315 or angle<45:
-                    
-                    if x2>x1:
-                        print(f"Obstacle detected at {next_node}")
-                        dynamic_updates.add(next_node)
-                elif angle>45 and angle<135:
-                    if y2>y1:
-                        print(f"Obstacle detected at {next_node}")
-                        dynamic_updates.add(next_node)
-                elif angle>135 and angle<225:
-                    if x1>x2:
-                        print(f"Obstacle detected at {next_node}")
-                        dynamic_updates.add(next_node)
-                elif angle>225 and angle<315:
-                    if y1>y2:
-                        print(f"Obstacle detected at {next_node}")
-                        dynamic_updates.add(next_node)
+    return closest_node
 
-    obstacles.update(dynamic_updates)
-    
-    updated_path = [node for node in path if node not in dynamic_updates]
-    
-    return updated_path, obstacles
 
 motor_select_pins = {
     
@@ -391,6 +386,8 @@ def motor4(direction, speed):
     gpio.output(motor_select_pins['M4']['In1'], direction == 'forward')
     gpio.output(motor_select_pins['M4']['In2'], direction == 'backward')
     pwm.ChangeDutyCycle(speed)
+
+a=0
 def movement( direction2, duration=2):
     reset_pins()
     for pin in motor_select_pins.values():
@@ -422,6 +419,13 @@ def movement( direction2, duration=2):
         motor4(direction='forward',speed=50)
 
     print(f"Moving {direction2}")
+    global a
+    a=a+1
+    print("A is",a)
+    
+    result_path = greedy_best_first_search_hierarchical(graph, start_node, goal_node, heuristic, region_map)
+    print("Len is",len(result_path))
+    
 
     sleep(duration)
 
@@ -431,7 +435,8 @@ def movement( direction2, duration=2):
     for pin in motor_select_pins.values():
         gpio.output(pin, gpio.LOW)
     reset_pins()
-    print("Motors stopped.")    
+    print("Motors stopped.")   
+    return a 
 
 def move_to_node(current_node, next_node, node_positions):
     print(f"Moving from {current_node} to {next_node}")
@@ -446,12 +451,16 @@ def move_to_node(current_node, next_node, node_positions):
         movement( direction2="forward",  duration=2)
     elif y2 < y1:
         movement( direction2="backward",  duration=2)
+    next_node = current_node
 
 def execute_path(path, node_positions):
     for i in range(len(path) - 1):
         current_node = path[i]
         next_node = path[i + 1]
         move_to_node(current_node, next_node, node_positions)
+        if current_node==goal_node:
+            end=True
+
         
 
 start_node = 'BZ'
@@ -464,29 +473,83 @@ target_point=get_coordinates(goal_node,pos)
 def euclidean_distance(p1, p2):
     return math.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
 heuristic = {
-     point: (float('inf') if point in obstacle_nodes else round(euclidean_distance(coord, target_point), 2))
+     point: (float('inf') if point in obstacles else round(euclidean_distance(coord, target_point), 2))
     for point, coord in pos.items()
 }
-   
 
-obstacles=set(obstacle_nodes)
+'''result_path = greedy_best_first_search_hierarchical(graph, start_node, goal_node, heuristic, region_map)
+print("Len is",len(result_path))
+def run_navigation_loop(graph, start_node, goal_node, heuristic, region_map, pos):
+    global a
+    result_path = greedy_best_first_search_hierarchical(graph, start_node, goal_node, heuristic, region_map)
+    print("Len is",len(result_path))
+    while a!=len(result_path):
+        result_path = greedy_best_first_search_hierarchical(graph, start_node, goal_node, heuristic, region_map)
+        print(a)
+        # Perform LiDAR scan and update obstacles
+        dynamic_obstacles = dynamic_obstacle_recognition(obstacles, result_path, pos)
+
+        # Recalculate the path based on the updated obstacles
+        result_path = greedy_best_first_search_hierarchical(graph, start_node, goal_node, heuristic, region_map)
+
+        # Execute the new path
+        execute_path(result_path, pos)
+
+        print(f"Updated Path from {start_node} to {goal_node}: {result_path}")
+        print(f"Updated obstacles: {obstacles}")
+
+        # Visualize the updated graph and path
+        
+
+        sleep(0.5)  # Delay to simulate time for new LIDAR data to be gathered
+        
+    #visualize_graph(graph, result_path, pos, region_map)
+    print("out of loop")
+#visualize_graph(graph, result_path, pos, region_map)
+# Start the loop
+#run_navigation_loop(graph, start_node, goal_node, heuristic, region_map, pos)'''
+
+
 
 
 
 
 result_path = greedy_best_first_search_hierarchical(graph, start_node, goal_node, heuristic, region_map)
 dynamic_obstacles=dynamic_obstacle_recognition(obstacles,result_path,pos)
-execute_path(result_path,pos)
+result_path2 = greedy_best_first_search_hierarchical(graph, start_node, goal_node, heuristic, region_map)
+execute_path(result_path2,pos)
+
+
+
+
 
 print("Path from {} to {}: {}".format(start_node, goal_node, result_path))
+print(f"obstacles: {obstacles}")
+print(f"obstacle nodes: {obstacle_nodes}")
 
 
-#visualize_graph(graph, result_path, pos, region_map)
 
 def simulate_ros_publish(pos, heuristic):
+    # Create the map_data as a dictionary
     map_data = {node: {"coordinates": coord, "heuristic": heuristic[node]} for node, coord in pos.items()}
     
-    # Print the data instead of publishing
-    print(json.dumps(map_data, indent=4))
+    # Convert map_data to JSON string
+    map_data_json = json.dumps(map_data, indent=4)
+    
+    # Initialize ROS node (replace 'map_publisher_node' with a suitable node name)
+    rospy.init_node('map_publisher_node', anonymous=True)
 
+    # Create a publisher object to publish to the /map topic
+    map_pub = rospy.Publisher('/map', String, queue_size=10)
+
+    # Wait until the publisher is connected to a subscriber
+    rospy.sleep(1)  # Wait for 1 second to ensure connection
+    
+    # Publish the map data
+    map_pub.publish(map_data_json)
+
+    # Optionally, print the published data for debugging
+    print(f"Published map data to /map topic:\n{map_data_json}")
+
+# Example usage
 simulate_ros_publish(pos, heuristic)
